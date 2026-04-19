@@ -1,108 +1,90 @@
-import numpy as np
-import cv2
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras import layers
+import numpy as np
+import time
 
-# =========================
-# CONFIG
-# =========================
-MODEL_PATH = "model.h5"   # change to your model file
-IMG_SIZE = (128, 128)
+print("TensorFlow:", tf.__version__)
+print("Keras:", keras.__version__)
 
-# =========================
-# SAFE MODEL LOADING (FIX)
-# =========================
-try:
-    model = keras.models.load_model(
-        MODEL_PATH,
-        compile=False  # IMPORTANT: avoids Keras version issues
-    )
-    print("✅ Model loaded successfully")
+# -----------------------------
+# MODEL BUILD (SAFE FUNCTIONAL MODEL)
+# -----------------------------
+def build_model():
+    inputs = keras.Input(shape=(128, 128, 3), name="input_layer")
 
-except Exception as e:
-    print("❌ Model loading failed:", e)
-    exit()
+    # Encoder
+    x = layers.Conv2D(16, 3, padding="same", activation="relu")(inputs)
+    x = layers.BatchNormalization()(x)
 
+    x = layers.Conv2D(16, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
 
-# =========================
-# PREPROCESS IMAGE
-# =========================
-def preprocess_image(image_path):
-    img = cv2.imread(image_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, IMG_SIZE)
-    img = img.astype(np.float32) / 255.0
-    img = np.expand_dims(img, axis=0)
-    return img
+    skip1 = x
+    x = layers.MaxPooling2D()(x)
 
+    # Middle
+    x = layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
 
-# =========================
-# PREDICT MASK
-# =========================
-def predict_mask(image):
-    pred = model.predict(image, verbose=0)
+    # Decoder
+    x = layers.UpSampling2D()(x)
+    x = layers.Concatenate()([x, skip1])
 
-    # For segmentation (softmax output)
-    mask = np.argmax(pred[0], axis=-1)
-    return mask
+    x = layers.Conv2D(16, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
+
+    outputs = layers.Conv2D(4, 1, activation="softmax")(x)
+
+    model = keras.Model(inputs, outputs, name="safe_unet_model")
+    return model
 
 
-# =========================
-# COLORIZE MASK
-# =========================
-def colorize_mask(mask):
-    colors = [
-        [0, 0, 0],        # class 0
-        [255, 0, 0],      # class 1
-        [0, 255, 0],      # class 2
-        [0, 0, 255],      # class 3
-    ]
-
-    h, w = mask.shape
-    output = np.zeros((h, w, 3), dtype=np.uint8)
-
-    for i, color in enumerate(colors):
-        output[mask == i] = color
-
-    return output
+model = build_model()
+model.summary()
 
 
-# =========================
-# OVERLAY FUNCTION
-# =========================
-def overlay_image(original, mask_color, alpha=0.5):
-    return cv2.addWeighted(original, 1 - alpha, mask_color, alpha, 0)
+# -----------------------------
+# COMPILE MODEL
+# -----------------------------
+model.compile(
+    optimizer="adam",
+    loss="categorical_crossentropy",
+    metrics=["accuracy"]
+)
 
 
-# =========================
-# RUN PIPELINE
-# =========================
-def run(image_path, alpha=0.5):
-    image = preprocess_image(image_path)
-
-    original = cv2.imread(image_path)
-    original = cv2.resize(original, IMG_SIZE)
-
-    mask = predict_mask(image)
-    mask_color = colorize_mask(mask)
-
-    result = overlay_image(original, mask_color, alpha)
-
-    cv2.imshow("Original", original)
-    cv2.imshow("Mask", mask_color)
-    cv2.imshow("Overlay", result)
-
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+# -----------------------------
+# SAVE MODEL (IMPORTANT: .keras ONLY)
+# -----------------------------
+print("\nSaving model...")
+model.save("model.keras")
+print("Model saved successfully")
 
 
-# =========================
-# TEST RUN
-# =========================
-if __name__ == "__main__":
-    image_path = "test.jpg"
+# -----------------------------
+# LOAD MODEL (SAFE + NO HANG)
+# -----------------------------
+print("\nLoading model...")
 
-    # 🔥 Overlay transparency control (0.10 → 1.00)
-    overlay_alpha = 0.4
+start = time.time()
 
-    run(image_path, alpha=overlay_alpha)
+model = keras.models.load_model(
+    "model.keras",
+    compile=False
+)
+
+print("Model loaded in:", round(time.time() - start, 2), "seconds")
+
+
+# -----------------------------
+# TEST PREDICTION (SAFE CHECK)
+# -----------------------------
+print("\nRunning test prediction...")
+
+dummy_input = np.random.rand(1, 128, 128, 3).astype("float32")
+
+output = model.predict(dummy_input, verbose=0)
+
+print("Output shape:", output.shape)
+print("Done successfully ✅")
