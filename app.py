@@ -1,92 +1,102 @@
 import streamlit as st
+import tensorflow as tf
 import numpy as np
 from PIL import Image
-import tensorflow as tf
+import os
 
-st.set_page_config(page_title="Road Defect Detection (U-Net)", layout="centered")
+st.set_page_config(page_title="Road Defect Detection", layout="centered")
 
-st.title("🚧 Road Defect Detection System (U-Net Multiclass)")
-
-# =========================
+# -----------------------------
 # SYSTEM INFO
-# =========================
-st.write("TensorFlow Version:", tf.__version__)
+# -----------------------------
+st.title("🚧 AI Road Defect Detection System")
 
-# =========================
-# LOAD MODEL (FIXED FOR .keras)
-# =========================
+st.write("TensorFlow Version:", tf.__version__)
+st.write("Keras (tf.keras is used inside TensorFlow)")
+
+MODEL_PATH = "road_defect_unet_multiclass.keras"
+
+
+# -----------------------------
+# LOAD MODEL (SAFE + FIXED)
+# -----------------------------
 @st.cache_resource
 def load_model():
     try:
+        if not os.path.exists(MODEL_PATH):
+            st.error(f"❌ Model file not found: {MODEL_PATH}")
+            return None
+
+        # IMPORTANT FIX:
+        # compile=False avoids many Keras deserialization issues
         model = tf.keras.models.load_model(
-            "road_defect_unet_multiclass.keras",
-            compile=False
+            MODEL_PATH,
+            compile=False,
+            safe_mode=False
         )
+
+        st.success("✅ Model loaded successfully!")
         return model
+
     except Exception as e:
         st.error("❌ Model loading failed")
         st.exception(e)
         return None
 
-st.write("Loading model... ⏳")
+
 model = load_model()
 
-# =========================
-# CLASS LABELS (EDIT IF NEEDED)
-# =========================
-CLASS_NAMES = {
-    0: "Background",
-    1: "Crack",
-    2: "Pothole",
-    3: "Road Damage"
-}
 
-# =========================
-# IMAGE UPLOAD
-# =========================
-uploaded_file = st.file_uploader("Upload Road Image", type=["jpg", "jpeg", "png"])
-
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_container_width=True)
-
-    # =========================
-    # PREPROCESS
-    # =========================
-    img = image.resize((128, 128))
-    img_array = np.array(img).astype(np.float32)
-
-    # fix grayscale or RGBA
-    if len(img_array.shape) == 2:
-        img_array = np.stack([img_array]*3, axis=-1)
+# -----------------------------
+# IMAGE PREPROCESSING
+# -----------------------------
+def preprocess_image(image):
+    image = image.resize((128, 128))
+    img_array = np.array(image) / 255.0
 
     if img_array.shape[-1] == 4:
         img_array = img_array[:, :, :3]
 
-    img_array = img_array / 255.0
     img_array = np.expand_dims(img_array, axis=0)
+    return img_array
 
-    # =========================
-    # PREDICTION
-    # =========================
-    if model:
-        st.write("Running prediction... 🔍")
 
-        pred = model.predict(img_array)
+# -----------------------------
+# PREDICTION
+# -----------------------------
+def predict(image):
+    if model is None:
+        return None
 
-        # multiclass segmentation output
-        mask = np.argmax(pred[0], axis=-1)
+    img = preprocess_image(image)
+    prediction = model.predict(img)
+    mask = np.argmax(prediction[0], axis=-1)
+    return mask
 
-        st.success("Prediction completed!")
 
-        st.image(mask * 60, caption="Predicted Defect Mask (Raw)")
+# -----------------------------
+# UI
+# -----------------------------
+st.subheader("📤 Upload Road Image")
 
-        # =========================
-        # CLASS STATS
-        # =========================
-        st.subheader("Detected Defects")
+uploaded_file = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
 
-        unique, counts = np.unique(mask, return_counts=True)
+if uploaded_file:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Input Image", use_container_width=True)
 
-        for u, c in zip(unique, counts):
-            st.write(f"**{CLASS_NAMES.get(u, 'Unknown')}** : {c} pixels")
+    if st.button("🔍 Detect Defects"):
+
+        if model is None:
+            st.error("Model not loaded. Fix environment first.")
+        else:
+            with st.spinner("Processing..."):
+                result = predict(image)
+
+            st.success("Prediction completed!")
+
+            st.image(
+                result,
+                caption="Detected Road Defects (Mask)",
+                use_container_width=True
+            )
