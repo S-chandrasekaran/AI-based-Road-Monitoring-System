@@ -5,27 +5,27 @@ from PIL import Image
 import time
 
 # -----------------------------
-# APP CONFIG
+# PAGE CONFIG
 # -----------------------------
-st.set_page_config(page_title="AI Road Monitoring", layout="centered")
+st.set_page_config(page_title="AI Road Monitoring System", layout="centered")
 
 st.title("🚧 AI-Based Road Monitoring System")
 
 # -----------------------------
-# SAFE VERSION INFO (IMPORTANT FIX)
+# SYSTEM INFO (SAFE FIX)
 # -----------------------------
 st.subheader("System Info")
 
 st.write("TensorFlow:", tf.__version__)
-st.write("Keras (tf.keras):", tf.keras.__version__)
+st.write("Keras is bundled inside TensorFlow (tf.keras)")
 
 
 # -----------------------------
-# LOAD MODEL (SAFE)
+# MODEL LOADING (SAFE + CACHED)
 # -----------------------------
 @st.cache_resource
 def load_model():
-    st.write("Loading model... please wait ⏳")
+    st.write("Loading model... ⏳")
 
     start = time.time()
 
@@ -53,15 +53,15 @@ uploaded_file = st.file_uploader("Choose an image", type=["jpg", "png", "jpeg"])
 # OVERLAY TRANSPARENCY SLIDER
 # -----------------------------
 st.subheader("Overlay Transparency")
-alpha = st.slider("Adjust Transparency", 0.1, 1.0, 0.5)
+alpha = st.slider("Transparency Level", 0.1, 1.0, 0.5)
 
 
 # -----------------------------
-# PREDICTION FUNCTION
+# PREPROCESS FUNCTION
 # -----------------------------
-def preprocess_image(img):
+def preprocess(img):
     img = img.resize((128, 128))
-    img = np.array(img) / 255.0
+    img = np.array(img).astype("float32") / 255.0
     img = np.expand_dims(img, axis=0)
     return img
 
@@ -71,29 +71,33 @@ def preprocess_image(img):
 # -----------------------------
 if uploaded_file is not None:
 
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Original Image", use_column_width=True)
+    # Load image
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Original Image", use_container_width=True)
 
-    st.write("Processing...")
+    st.write("Running prediction...")
 
-    input_img = preprocess_image(image)
+    # Preprocess
+    input_img = preprocess(image)
 
+    # Prediction
     pred = model.predict(input_img, verbose=0)
 
-    # fake segmentation visualization (for demo-safe UI)
+    # Convert prediction to mask
     mask = np.argmax(pred[0], axis=-1)
 
     mask_img = Image.fromarray((mask * 60).astype(np.uint8))
 
-    st.subheader("Prediction Output")
+    # Show results
+    st.subheader("Prediction Results")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.image(image, caption="Original", use_column_width=True)
+        st.image(image, caption="Original", use_container_width=True)
 
     with col2:
-        st.image(mask_img, caption="Predicted Mask", use_column_width=True)
+        st.image(mask_img, caption="Predicted Mask", use_container_width=True)
 
 
     # -----------------------------
@@ -104,12 +108,15 @@ if uploaded_file is not None:
     image_resized = image.resize((128, 128))
     image_np = np.array(image_resized)
 
-    mask_rgb = np.stack([mask * 80]*3, axis=-1)
+    mask_rgb = np.stack([mask * 80] * 3, axis=-1)
 
     overlay = (alpha * image_np + (1 - alpha) * mask_rgb).astype(np.uint8)
 
-    st.image(overlay, caption=f"Overlay (alpha={alpha})", use_column_width=True)
-
+    st.image(
+        overlay,
+        caption=f"Overlay (Transparency = {alpha})",
+        use_container_width=True
+    )
 
 else:
     st.info("Upload an image to start prediction.")
