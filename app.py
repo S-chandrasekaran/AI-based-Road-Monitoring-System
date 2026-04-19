@@ -3,25 +3,24 @@ import numpy as np
 from PIL import Image
 import tensorflow as tf
 
-st.set_page_config(page_title="AI Road Monitoring System", layout="centered")
+st.set_page_config(page_title="Road Defect Detection (U-Net)", layout="centered")
+
+st.title("🚧 Road Defect Detection System (U-Net Multiclass)")
 
 # =========================
-# SYSTEM INFO (FIXED)
+# SYSTEM INFO
 # =========================
-st.title("🚧 AI-Based Road Monitoring System")
-
 st.write("TensorFlow Version:", tf.__version__)
-st.write("Keras is included inside TensorFlow → use tf.keras only")
 
 # =========================
-# LOAD MODEL (SAFE + FIXED)
+# LOAD MODEL (FIXED FOR .keras)
 # =========================
 @st.cache_resource
 def load_model():
     try:
         model = tf.keras.models.load_model(
-            "model.h5",        # change if your file name is different
-            compile=False      # IMPORTANT FIX for most errors
+            "road_defect_unet_multiclass.keras",
+            compile=False
         )
         return model
     except Exception as e:
@@ -29,15 +28,25 @@ def load_model():
         st.exception(e)
         return None
 
-st.write("Loading model... ⏳ Please wait")
+st.write("Loading model... ⏳")
 model = load_model()
+
+# =========================
+# CLASS LABELS (EDIT IF NEEDED)
+# =========================
+CLASS_NAMES = {
+    0: "Background",
+    1: "Crack",
+    2: "Pothole",
+    3: "Road Damage"
+}
 
 # =========================
 # IMAGE UPLOAD
 # =========================
 uploaded_file = st.file_uploader("Upload Road Image", type=["jpg", "jpeg", "png"])
 
-if uploaded_file is not None:
+if uploaded_file:
     image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Image", use_container_width=True)
 
@@ -45,7 +54,11 @@ if uploaded_file is not None:
     # PREPROCESS
     # =========================
     img = image.resize((128, 128))
-    img_array = np.array(img)
+    img_array = np.array(img).astype(np.float32)
+
+    # fix grayscale or RGBA
+    if len(img_array.shape) == 2:
+        img_array = np.stack([img_array]*3, axis=-1)
 
     if img_array.shape[-1] == 4:
         img_array = img_array[:, :, :3]
@@ -56,16 +69,24 @@ if uploaded_file is not None:
     # =========================
     # PREDICTION
     # =========================
-    if model is not None:
+    if model:
         st.write("Running prediction... 🔍")
 
-        prediction = model.predict(img_array)
-        mask = np.argmax(prediction, axis=-1)[0]
+        pred = model.predict(img_array)
+
+        # multiclass segmentation output
+        mask = np.argmax(pred[0], axis=-1)
 
         st.success("Prediction completed!")
 
-        st.write("Output Mask Shape:", mask.shape)
-        st.image(mask * 80, caption="Predicted Road Mask")
+        st.image(mask * 60, caption="Predicted Defect Mask (Raw)")
 
-    else:
-        st.warning("Model not loaded. Check model file path.")
+        # =========================
+        # CLASS STATS
+        # =========================
+        st.subheader("Detected Defects")
+
+        unique, counts = np.unique(mask, return_counts=True)
+
+        for u, c in zip(unique, counts):
+            st.write(f"**{CLASS_NAMES.get(u, 'Unknown')}** : {c} pixels")
