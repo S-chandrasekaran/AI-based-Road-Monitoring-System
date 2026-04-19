@@ -23,7 +23,7 @@ st.set_page_config(
     layout="wide"
 )
 
-MODEL_PATH = r"C:\Users\ChandraSekar\Desktop\RP\road_defect_unet_multiclass.keras"
+MODEL_PATH = r"road_defect_unet_multiclass.keras"
 IMG_SIZE = 128   # MUST match training size
 
 CLASS_NAMES = {
