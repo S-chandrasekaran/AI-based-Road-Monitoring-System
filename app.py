@@ -14,8 +14,9 @@ st.set_page_config(
     layout="wide"
 )
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "road_defect_unet_multiclass.keras")
 IMG_SIZE = 128
+
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "road_defect_unet_multiclass.keras")
 
 CLASS_NAMES = {
     1: "Pothole",
@@ -24,60 +25,32 @@ CLASS_NAMES = {
 }
 
 CLASS_COLORS = {
-    1: [255, 0, 0],
-    2: [0, 0, 255],
-    3: [0, 255, 0]
+    1: [255, 0, 0],   # Red
+    2: [0, 0, 255],   # Blue
+    3: [0, 255, 0]    # Green
 }
 
-NUM_CLASSES = 4
-
 # =========================
-# METRICS (for model loading)
-# =========================
-def dice_coef(y_true, y_pred):
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.cast(y_pred, tf.float32)
-
-    y_true = tf.reshape(y_true, [-1, NUM_CLASSES])
-    y_pred = tf.reshape(y_pred, [-1, NUM_CLASSES])
-
-    intersection = tf.reduce_sum(y_true * y_pred, axis=0)
-    return tf.reduce_mean((2. * intersection) /
-                          (tf.reduce_sum(y_true, axis=0) + tf.reduce_sum(y_pred, axis=0) + 1e-6))
-
-def iou_metric(y_true, y_pred):
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.cast(y_pred, tf.float32)
-
-    y_true = tf.reshape(y_true, [-1, NUM_CLASSES])
-    y_pred = tf.reshape(y_pred, [-1, NUM_CLASSES])
-
-    intersection = tf.reduce_sum(y_true * y_pred, axis=0)
-    union = tf.reduce_sum(y_true + y_pred, axis=0) - intersection
-
-    return tf.reduce_mean(intersection / (union + 1e-6))
-
-# =========================
-# LOAD MODEL
+# SAFE MODEL LOADING
 # =========================
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
+        st.error("❌ Model file not found in repo.")
         return None
 
     try:
         model = tf.keras.models.load_model(
             MODEL_PATH,
-            custom_objects={
-                "dice_coef": dice_coef,
-                "iou_metric": iou_metric
-            },
-            compile=False
+            compile=False,   # IMPORTANT FIX
         )
         return model
+
     except Exception as e:
-        st.error(f"Model loading failed: {e}")
+        st.error("❌ Model loading failed (Keras version mismatch).")
+        st.exception(e)
         return None
+
 
 model = load_model()
 
@@ -86,31 +59,34 @@ model = load_model()
 # =========================
 st.title("🛣️ Road Defect Detection using U-Net")
 
-if model is None:
-    st.error("❌ Model not found or failed to load. Check repo file path.")
-    st.stop()
+st.markdown("""
+Upload a road image to detect:
+- 🔴 Pothole  
+- 🔵 Crack  
+- 🟢 Manhole  
+""")
 
-uploaded_file = st.file_uploader("Upload Road Image", type=["jpg", "jpeg", "png"])
+st.sidebar.header("⚙️ Settings")
+overlay_alpha = st.sidebar.slider("Overlay Transparency", 0.1, 1.0, 0.4)
 
 # =========================
-# FUNCTIONS
+# IMAGE PROCESSING
 # =========================
-def preprocess(img):
-    img = np.array(img.convert("RGB"))
-    h, w = img.shape[:2]
+def predict(image):
+    original = np.array(image.convert("RGB"))
+    h, w = original.shape[:2]
 
-    resized = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    norm = resized / 255.0
-    return img, np.expand_dims(norm.astype(np.float32), axis=0), (h, w)
-
-def predict(img):
-    original, input_img, (h, w) = preprocess(img)
+    resized = cv2.resize(original, (IMG_SIZE, IMG_SIZE))
+    input_img = resized / 255.0
+    input_img = np.expand_dims(input_img, axis=0)
 
     pred = model.predict(input_img, verbose=0)[0]
     mask = np.argmax(pred, axis=-1).astype(np.uint8)
 
     mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
     return original, mask
+
 
 def colorize(mask):
     color = np.zeros((*mask.shape, 3), dtype=np.uint8)
@@ -118,28 +94,56 @@ def colorize(mask):
         color[mask == k] = v
     return color
 
-# =========================
-# MAIN
-# =========================
-if uploaded_file:
-    image = Image.open(uploaded_file)
 
-    with st.spinner("Processing..."):
+def summary(mask):
+    out = {}
+    for k, name in CLASS_NAMES.items():
+        count = np.sum(mask == k)
+        if count > 100:
+            out[name] = int(count)
+    return out
+
+# =========================
+# UPLOAD
+# =========================
+uploaded = st.file_uploader("📤 Upload Road Image", type=["jpg", "png", "jpeg"])
+
+if uploaded:
+
+    if model is None:
+        st.stop()
+
+    image = Image.open(uploaded)
+
+    with st.spinner("Detecting defects..."):
         original, mask = predict(image)
         color_mask = colorize(mask)
 
-        overlay = cv2.addWeighted(original, 0.6, color_mask, 0.4, 0)
+        overlay = cv2.addWeighted(original, 1 - overlay_alpha, color_mask, overlay_alpha, 0)
+        detections = summary(mask)
 
+    # =========================
+    # DISPLAY
+    # =========================
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.image(original, caption="Original")
+        st.image(original, caption="Original", use_container_width=True)
 
     with col2:
-        st.image(mask * 80, caption="Mask")
+        st.image(mask * 80, caption="Mask", use_container_width=True)
 
     with col3:
-        st.image(overlay, caption="Overlay")
+        st.image(overlay, caption="Overlay", use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("📋 Detection Summary")
+
+    if not detections:
+        st.success("No major defects detected.")
+    else:
+        for k, v in detections.items():
+            st.warning(f"{k}: {v} pixels")
 
 else:
-    st.info("Upload an image to start detection")
+    st.info("Upload an image to start detection.")
