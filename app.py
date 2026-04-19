@@ -12,20 +12,20 @@ st.set_page_config(page_title="AI Road Monitoring System", layout="centered")
 st.title("🚧 AI-Based Road Monitoring System")
 
 # -----------------------------
-# SYSTEM INFO (SAFE FIX)
+# SYSTEM INFO (FIXED - NO KERAS VERSION)
 # -----------------------------
 st.subheader("System Info")
 
-st.write("TensorFlow:", tf.__version__)
-st.write("Keras is bundled inside TensorFlow (tf.keras)")
+st.write("TensorFlow Version:", tf.__version__)
+st.write("Keras is included inside TensorFlow (tf.keras)")
 
 
 # -----------------------------
-# MODEL LOADING (SAFE + CACHED)
+# LOAD MODEL (SAFE + CACHED)
 # -----------------------------
 @st.cache_resource
 def load_model():
-    st.write("Loading model... ⏳")
+    st.write("Loading model... ⏳ Please wait")
 
     start = time.time()
 
@@ -34,7 +34,7 @@ def load_model():
         compile=False
     )
 
-    st.write("Model loaded in:", round(time.time() - start, 2), "seconds")
+    st.write("Model loaded in", round(time.time() - start, 2), "seconds")
     return model
 
 
@@ -42,24 +42,27 @@ model = load_model()
 
 
 # -----------------------------
-# IMAGE UPLOAD
+# UPLOAD IMAGE
 # -----------------------------
 st.subheader("Upload Road Image")
 
-uploaded_file = st.file_uploader("Choose an image", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader(
+    "Choose an image",
+    type=["jpg", "jpeg", "png"]
+)
 
 
 # -----------------------------
 # OVERLAY TRANSPARENCY SLIDER
 # -----------------------------
 st.subheader("Overlay Transparency")
-alpha = st.slider("Transparency Level", 0.1, 1.0, 0.5)
+alpha = st.slider("Adjust Transparency", 0.1, 1.0, 0.5)
 
 
 # -----------------------------
 # PREPROCESS FUNCTION
 # -----------------------------
-def preprocess(img):
+def preprocess_image(img):
     img = img.resize((128, 128))
     img = np.array(img).astype("float32") / 255.0
     img = np.expand_dims(img, axis=0)
@@ -67,7 +70,7 @@ def preprocess(img):
 
 
 # -----------------------------
-# MAIN LOGIC
+# MAIN APP LOGIC
 # -----------------------------
 if uploaded_file is not None:
 
@@ -78,7 +81,7 @@ if uploaded_file is not None:
     st.write("Running prediction...")
 
     # Preprocess
-    input_img = preprocess(image)
+    input_img = preprocess_image(image)
 
     # Prediction
     pred = model.predict(input_img, verbose=0)
