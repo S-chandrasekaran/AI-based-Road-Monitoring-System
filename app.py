@@ -23,8 +23,7 @@ st.set_page_config(
     layout="wide"
 )
 import os
-
-model_path = os.path.join(os.path.dirname(__file__), "road_defect_unet_multiclass.keras")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "road_defect_unet_multiclass.keras")
 IMG_SIZE = 128   # MUST match training size
 
 CLASS_NAMES = {
