@@ -1,186 +1,108 @@
-import streamlit as st
 import numpy as np
-import tensorflow as tf
-import os
-from PIL import Image
 import cv2
+import tensorflow as tf
+from tensorflow import keras
 
-# =========================================================
+# =========================
 # CONFIG
-# =========================================================
-st.set_page_config(
-    page_title="Road Defect Detection",
-    page_icon="🛣️",
-    layout="wide"
-)
+# =========================
+MODEL_PATH = "model.h5"   # change to your model file
+IMG_SIZE = (128, 128)
 
-IMG_SIZE = 128
+# =========================
+# SAFE MODEL LOADING (FIX)
+# =========================
+try:
+    model = keras.models.load_model(
+        MODEL_PATH,
+        compile=False  # IMPORTANT: avoids Keras version issues
+    )
+    print("✅ Model loaded successfully")
 
-CLASS_NAMES = {
-    1: "Pothole",
-    2: "Crack",
-    3: "Manhole"
-}
-
-CLASS_COLORS = {
-    1: [255, 0, 0],
-    2: [0, 0, 255],
-    3: [0, 255, 0]
-}
-
-# =========================================================
-# MODEL PATH (supports both formats)
-# =========================================================
-MODEL_PATH_KERAS = "road_defect_unet_multiclass.keras"
-MODEL_PATH_H5 = "road_defect_unet.h5"
+except Exception as e:
+    print("❌ Model loading failed:", e)
+    exit()
 
 
-# =========================================================
-# METRICS (only needed if model uses them)
-# =========================================================
-NUM_CLASSES = 4
-
-def dice_coef(y_true, y_pred):
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.cast(y_pred, tf.float32)
-
-    y_true = tf.reshape(y_true, [-1, NUM_CLASSES])
-    y_pred = tf.reshape(y_pred, [-1, NUM_CLASSES])
-
-    intersection = tf.reduce_sum(y_true * y_pred, axis=0)
-    union = tf.reduce_sum(y_true + y_pred, axis=0)
-
-    return tf.reduce_mean((2. * intersection) / (union + 1e-6))
+# =========================
+# PREPROCESS IMAGE
+# =========================
+def preprocess_image(image_path):
+    img = cv2.imread(image_path)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, IMG_SIZE)
+    img = img.astype(np.float32) / 255.0
+    img = np.expand_dims(img, axis=0)
+    return img
 
 
-def iou_metric(y_true, y_pred):
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.cast(y_pred, tf.float32)
+# =========================
+# PREDICT MASK
+# =========================
+def predict_mask(image):
+    pred = model.predict(image, verbose=0)
 
-    y_true = tf.reshape(y_true, [-1, NUM_CLASSES])
-    y_pred = tf.reshape(y_pred, [-1, NUM_CLASSES])
-
-    intersection = tf.reduce_sum(y_true * y_pred, axis=0)
-    union = tf.reduce_sum(y_true + y_pred, axis=0) - intersection
-
-    return tf.reduce_mean((intersection + 1e-6) / (union + 1e-6))
+    # For segmentation (softmax output)
+    mask = np.argmax(pred[0], axis=-1)
+    return mask
 
 
-# =========================================================
-# MODEL LOADING (SAFE)
-# =========================================================
-@st.cache_resource
-def load_model():
-    try:
-        path = None
+# =========================
+# COLORIZE MASK
+# =========================
+def colorize_mask(mask):
+    colors = [
+        [0, 0, 0],        # class 0
+        [255, 0, 0],      # class 1
+        [0, 255, 0],      # class 2
+        [0, 0, 255],      # class 3
+    ]
 
-        if os.path.exists(MODEL_PATH_H5):
-            path = MODEL_PATH_H5
-        elif os.path.exists(MODEL_PATH_KERAS):
-            path = MODEL_PATH_KERAS
-        else:
-            return None, "Model file not found"
-
-        model = tf.keras.models.load_model(
-            path,
-            custom_objects={
-                "dice_coef": dice_coef,
-                "iou_metric": iou_metric
-            },
-            compile=False
-        )
-
-        return model, "loaded"
-
-    except Exception as e:
-        return None, str(e)
-
-
-model, model_status = load_model()
-
-# =========================================================
-# UI
-# =========================================================
-st.title("🛣️ Road Defect Detection (U-Net)")
-
-if model is None:
-    st.error("❌ Model failed to load")
-    st.code(model_status)
-    st.stop()
-
-st.success("✅ Model loaded successfully")
-
-uploaded_file = st.file_uploader("Upload road image", type=["jpg", "jpeg", "png"])
-
-
-# =========================================================
-# FUNCTIONS
-# =========================================================
-def preprocess(img):
-    img = np.array(img.convert("RGB"))
-    h, w = img.shape[:2]
-
-    resized = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    resized = resized / 255.0
-    resized = np.expand_dims(resized, axis=0)
-
-    return img, resized, h, w
-
-
-def predict(img):
-    original, inp, h, w = preprocess(img)
-
-    pred = model.predict(inp, verbose=0)[0]
-    mask = np.argmax(pred, axis=-1).astype(np.uint8)
-
-    mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
-
-    return original, mask
-
-
-def color_mask(mask):
     h, w = mask.shape
-    color = np.zeros((h, w, 3), dtype=np.uint8)
+    output = np.zeros((h, w, 3), dtype=np.uint8)
 
-    for k, v in CLASS_COLORS.items():
-        color[mask == k] = v
+    for i, color in enumerate(colors):
+        output[mask == i] = color
 
-    return color
+    return output
 
 
-# =========================================================
-# MAIN
-# =========================================================
-if uploaded_file:
+# =========================
+# OVERLAY FUNCTION
+# =========================
+def overlay_image(original, mask_color, alpha=0.5):
+    return cv2.addWeighted(original, 1 - alpha, mask_color, alpha, 0)
 
-    image = Image.open(uploaded_file)
 
-    with st.spinner("Processing..."):
-        original, mask = predict(image)
-        overlay = color_mask(mask)
+# =========================
+# RUN PIPELINE
+# =========================
+def run(image_path, alpha=0.5):
+    image = preprocess_image(image_path)
 
-        blended = cv2.addWeighted(original, 0.6, overlay, 0.4, 0)
+    original = cv2.imread(image_path)
+    original = cv2.resize(original, IMG_SIZE)
 
-    col1, col2, col3 = st.columns(3)
+    mask = predict_mask(image)
+    mask_color = colorize_mask(mask)
 
-    with col1:
-        st.image(original, caption="Original", use_container_width=True)
+    result = overlay_image(original, mask_color, alpha)
 
-    with col2:
-        st.image(mask * 60, caption="Mask", use_container_width=True)
+    cv2.imshow("Original", original)
+    cv2.imshow("Mask", mask_color)
+    cv2.imshow("Overlay", result)
 
-    with col3:
-        st.image(blended, caption="Overlay", use_container_width=True)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-    st.subheader("Detected Classes")
 
-    unique = np.unique(mask)
-    detected = [CLASS_NAMES[i] for i in unique if i in CLASS_NAMES]
+# =========================
+# TEST RUN
+# =========================
+if __name__ == "__main__":
+    image_path = "test.jpg"
 
-    if detected:
-        st.write(", ".join(detected))
-    else:
-        st.write("No defects detected")
+    # 🔥 Overlay transparency control (0.10 → 1.00)
+    overlay_alpha = 0.4
 
-else:
-    st.info("Upload an image to start detection")
+    run(image_path, alpha=overlay_alpha)
