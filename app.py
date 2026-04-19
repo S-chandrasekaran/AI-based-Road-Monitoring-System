@@ -31,13 +31,13 @@ CLASS_COLORS = {
 NUM_CLASSES = 4
 
 # =========================================================
-# MODEL PATH (CLOUD SAFE)
+# MODEL PATH (UPLOAD FILE TO SAME GITHUB FOLDER)
 # =========================================================
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "road_defect_unet_multiclass.keras")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "road_defect_unet.h5")
 
 
 # =========================================================
-# CUSTOM LOSS / METRICS (needed for loading model)
+# CUSTOM METRICS (ONLY IF USED IN TRAINING)
 # =========================================================
 def dice_coef(y_true, y_pred):
     y_true = tf.cast(y_true, tf.float32)
@@ -68,7 +68,7 @@ def iou_metric(y_true, y_pred):
 
 
 # =========================================================
-# MODEL LOADING (SAFE + CACHED)
+# SAFE MODEL LOADING (FIXES YOUR ERROR)
 # =========================================================
 @st.cache_resource
 def load_model():
@@ -81,11 +81,13 @@ def load_model():
             custom_objects={
                 "dice_coef": dice_coef,
                 "iou_metric": iou_metric
-            }
+            },
+            compile=False  # IMPORTANT: avoids loading issues
         )
         return model
+
     except Exception as e:
-        st.error(f"Model loading failed: {e}")
+        st.error(f"❌ Model loading failed: {e}")
         return None
 
 
@@ -93,7 +95,7 @@ model = load_model()
 
 
 # =========================================================
-# PREDICTION
+# IMAGE PREDICTION
 # =========================================================
 def predict_mask(image):
     original = np.array(image.convert("RGB"))
@@ -124,7 +126,7 @@ def colorize_mask(mask):
 
 
 # =========================================================
-# DETECTION SUMMARY
+# SUMMARY
 # =========================================================
 def get_summary(mask, threshold=100):
     result = {}
@@ -138,24 +140,25 @@ def get_summary(mask, threshold=100):
 # =========================================================
 # UI
 # =========================================================
-st.title("🛣️ Road Defect Detection (U-Net)")
+st.title("🛣️ Road Defect Detection using U-Net")
 
 if model is None:
-    st.error("❌ Model not found or failed to load. Check repo file path.")
+    st.error("❌ Model not found or corrupted. Please fix model file in GitHub repo.")
     st.stop()
 
-uploaded_file = st.file_uploader("Upload road image", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("📤 Upload Road Image", type=["jpg", "jpeg", "png"])
 
-overlay_alpha = st.sidebar.slider("Overlay opacity", 0.1, 1.0, 0.4)
+overlay_alpha = st.sidebar.slider("Overlay Transparency", 0.1, 1.0, 0.4)
+
 
 # =========================================================
-# MAIN LOGIC
+# MAIN FLOW
 # =========================================================
 if uploaded_file:
 
     image = Image.open(uploaded_file)
 
-    with st.spinner("Running inference..."):
+    with st.spinner("🔍 Running inference..."):
         original, mask = predict_mask(image)
         color_mask = colorize_mask(mask)
 
@@ -165,21 +168,34 @@ if uploaded_file:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.image(original, caption="Original", use_container_width=True)
+        st.image(original, caption="Original Image", use_container_width=True)
 
     with col2:
-        st.image(mask * 60, caption="Mask", use_container_width=True)
+        st.image(mask * 60, caption="Predicted Mask", use_container_width=True)
 
     with col3:
-        st.image(overlay, caption="Overlay", use_container_width=True)
+        st.image(overlay, caption="Overlay Result", use_container_width=True)
 
-    st.subheader("Detection Summary")
+    st.markdown("---")
+    st.subheader("📋 Detection Results")
 
     if detections:
         for k, v in detections.items():
-            st.warning(f"{k}: {v} pixels")
+            st.warning(f"{k} → {v} pixels detected")
     else:
-        st.success("No major defects detected")
+        st.success("No major road defects detected")
+
+    # download result
+    overlay_bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
+    success, encoded = cv2.imencode(".png", overlay_bgr)
+
+    if success:
+        st.download_button(
+            "⬇️ Download Result",
+            data=encoded.tobytes(),
+            file_name="road_defect_result.png",
+            mime="image/png"
+        )
 
 else:
-    st.info("Upload an image to start detection")
+    st.info("👈 Upload an image to start detection")
