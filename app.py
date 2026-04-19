@@ -1,90 +1,115 @@
+import streamlit as st
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
 import numpy as np
+from PIL import Image
 import time
 
-print("TensorFlow:", tf.__version__)
-print("Keras:", keras.__version__)
+# -----------------------------
+# APP CONFIG
+# -----------------------------
+st.set_page_config(page_title="AI Road Monitoring", layout="centered")
+
+st.title("🚧 AI-Based Road Monitoring System")
 
 # -----------------------------
-# MODEL BUILD (SAFE FUNCTIONAL MODEL)
+# SAFE VERSION INFO (IMPORTANT FIX)
 # -----------------------------
-def build_model():
-    inputs = keras.Input(shape=(128, 128, 3), name="input_layer")
+st.subheader("System Info")
 
-    # Encoder
-    x = layers.Conv2D(16, 3, padding="same", activation="relu")(inputs)
-    x = layers.BatchNormalization()(x)
+st.write("TensorFlow:", tf.__version__)
+st.write("Keras (tf.keras):", tf.keras.__version__)
 
-    x = layers.Conv2D(16, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
 
-    skip1 = x
-    x = layers.MaxPooling2D()(x)
+# -----------------------------
+# LOAD MODEL (SAFE)
+# -----------------------------
+@st.cache_resource
+def load_model():
+    st.write("Loading model... please wait ⏳")
 
-    # Middle
-    x = layers.Conv2D(32, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
+    start = time.time()
 
-    # Decoder
-    x = layers.UpSampling2D()(x)
-    x = layers.Concatenate()([x, skip1])
+    model = tf.keras.models.load_model(
+        "model.keras",
+        compile=False
+    )
 
-    x = layers.Conv2D(16, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
-
-    outputs = layers.Conv2D(4, 1, activation="softmax")(x)
-
-    model = keras.Model(inputs, outputs, name="safe_unet_model")
+    st.write("Model loaded in:", round(time.time() - start, 2), "seconds")
     return model
 
 
-model = build_model()
-model.summary()
+model = load_model()
 
 
 # -----------------------------
-# COMPILE MODEL
+# IMAGE UPLOAD
 # -----------------------------
-model.compile(
-    optimizer="adam",
-    loss="categorical_crossentropy",
-    metrics=["accuracy"]
-)
+st.subheader("Upload Road Image")
+
+uploaded_file = st.file_uploader("Choose an image", type=["jpg", "png", "jpeg"])
 
 
 # -----------------------------
-# SAVE MODEL (IMPORTANT: .keras ONLY)
+# OVERLAY TRANSPARENCY SLIDER
 # -----------------------------
-print("\nSaving model...")
-model.save("model.keras")
-print("Model saved successfully")
-
-
-# -----------------------------
-# LOAD MODEL (SAFE + NO HANG)
-# -----------------------------
-print("\nLoading model...")
-
-start = time.time()
-
-model = keras.models.load_model(
-    "model.keras",
-    compile=False
-)
-
-print("Model loaded in:", round(time.time() - start, 2), "seconds")
+st.subheader("Overlay Transparency")
+alpha = st.slider("Adjust Transparency", 0.1, 1.0, 0.5)
 
 
 # -----------------------------
-# TEST PREDICTION (SAFE CHECK)
+# PREDICTION FUNCTION
 # -----------------------------
-print("\nRunning test prediction...")
+def preprocess_image(img):
+    img = img.resize((128, 128))
+    img = np.array(img) / 255.0
+    img = np.expand_dims(img, axis=0)
+    return img
 
-dummy_input = np.random.rand(1, 128, 128, 3).astype("float32")
 
-output = model.predict(dummy_input, verbose=0)
+# -----------------------------
+# MAIN LOGIC
+# -----------------------------
+if uploaded_file is not None:
 
-print("Output shape:", output.shape)
-print("Done successfully ✅")
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Original Image", use_column_width=True)
+
+    st.write("Processing...")
+
+    input_img = preprocess_image(image)
+
+    pred = model.predict(input_img, verbose=0)
+
+    # fake segmentation visualization (for demo-safe UI)
+    mask = np.argmax(pred[0], axis=-1)
+
+    mask_img = Image.fromarray((mask * 60).astype(np.uint8))
+
+    st.subheader("Prediction Output")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.image(image, caption="Original", use_column_width=True)
+
+    with col2:
+        st.image(mask_img, caption="Predicted Mask", use_column_width=True)
+
+
+    # -----------------------------
+    # OVERLAY VISUALIZATION
+    # -----------------------------
+    st.subheader("Overlay Result")
+
+    image_resized = image.resize((128, 128))
+    image_np = np.array(image_resized)
+
+    mask_rgb = np.stack([mask * 80]*3, axis=-1)
+
+    overlay = (alpha * image_np + (1 - alpha) * mask_rgb).astype(np.uint8)
+
+    st.image(overlay, caption=f"Overlay (alpha={alpha})", use_column_width=True)
+
+
+else:
+    st.info("Upload an image to start prediction.")
